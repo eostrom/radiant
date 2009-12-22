@@ -8,74 +8,116 @@ module Radiant
 
     class DuplicateTabNameError < StandardError; end
 
-    class Tab
-      attr_accessor :name, :url, :visibility
+    # The NavTab Class holds the structure of a navigation tab (including
+    # its sub-nav items).
+    class NavTab < Array
+      attr_reader :name
 
-      def initialize(name, url, options = {})
-        @name, @url = name, url
-        @visibility = [options[:for], options[:visibility]].flatten.compact
-        @visibility = [:all] if @visibility.empty?
+      def initialize(name)
+        @name = name
       end
 
-      def shown_for?(user)
-        visibility.include?(:all) or
-          visibility.any? { |role| user.send("#{role}?") }
-      end
-    end
-
-    class TabSet
-      def initialize
-        @tabs = []
-      end
-
-      def add(name, url, options = {})
-        options.symbolize_keys!
-        before = options.delete(:before)
-        after = options.delete(:after)
-        tab_name = before || after
-        if self[name]
-          raise DuplicateTabNameError.new("duplicate tab name `#{name}'")
+      def [](id)
+        unless id.kind_of? Fixnum
+          self.find {|subnav_item| subnav_item.name.to_s.titleize == id.to_s.titleize }
         else
-          if tab_name
-            index = @tabs.index(self[tab_name])
-            index += 1 if before.nil?
-            @tabs.insert(index, Tab.new(name, url, options))
+          super
+        end
+      end
+
+      def <<(*args)
+        options = args.extract_options!
+        item = args.size > 1 ? deprecated_add(*(args << caller)) : args.first
+        raise DuplicateTabNameError.new("duplicate tab name `#{item.name}'") if self[item.name]
+        item.tab = self if item.respond_to?(:tab=)
+        if options.empty?
+          super(item)
+        else
+          options.symbolize_keys!
+          before = options.delete(:before)
+          after = options.delete(:after)
+          tab_name = before || after
+          if self[tab_name]
+            _index = index(self[tab_name])
+            _index += 1 unless before
+            insert(_index, item)
           else
-            @tabs << Tab.new(name, url, options)
+            super(item)
           end
         end
       end
 
-      def remove(name)
-        @tabs.delete(self[name])
-      end
-
-      def size
-        @tabs.size
-      end
-
-      def [](index)
-        if index.kind_of? Integer
-          @tabs[index]
+      alias :add :<<
+      
+      def add_item(*args)
+        options = args.extract_options!
+        options.symbolize_keys!
+        before = options.delete(:before)
+        after = options.delete(:after)
+        tab_name = before || after
+        if self[tab_name]
+          _index = index(self[tab_name])
+          _index += 1 unless before
+          insert(_index, NavSubItem.new(args.first, args.second))
         else
-          @tabs.find { |tab| tab.name == index }
+          add NavSubItem.new(args.first, args.second)
         end
       end
 
-      def each
-        @tabs.each { |t| yield t }
+      def visible?(user)
+        any? { |sub_item| sub_item.visible?(user) }
       end
 
-      def clear
-        @tabs.clear
+      def deprecated_add(name, url, caller)
+        ActiveSupport::Deprecation.warn("admin.tabs.add is no longer supported in Radiant 0.9.x.  Please update your code to use admin.nav", caller)
+        NavSubItem.new(name, url)
+      end
+    end
+
+    # Simple structure for storing the properties of a tab's sub items.
+    class NavSubItem
+      attr_reader :name, :url
+      attr_accessor :tab
+
+      def initialize(name, url = "#")
+        @name, @url = name, url
       end
 
-      include Enumerable
+      def visible?(user)
+        visible_by_controller?(user)
+      end
+
+      def relative_url
+        File.join(ActionController::Base.relative_url_root || '', url)
+      end
+      
+      private
+      def visible_by_controller?(user)
+        params = ActionController::Routing::Routes.recognize_path(url, :method => :get)
+        if params && params[:controller]
+          klass = "#{params[:controller].camelize}Controller".constantize
+          klass.user_has_access_to_action?(user, params[:action])
+        else
+          false
+        end
+      end
     end
 
     include Simpleton
 
-    attr_accessor :tabs
+    attr_accessor :nav
+    
+    def nav_tab(*args)
+      NavTab.new(*args)
+    end
+    
+    def nav_item(*args)
+      NavSubItem.new(*args)
+    end
+    
+    def tabs
+      nav[:content]
+    end
 
     # Region sets
     %w{page snippet layout user extension}.each do |controller|
@@ -84,8 +126,29 @@ module Radiant
     end
 
     def initialize
-      @tabs = TabSet.new
+      @nav = NavTab.new("Tab Container")
       load_default_regions
+    end
+
+    def load_default_nav
+      content = nav_tab("Content")
+      content << nav_item("Pages", "/admin/pages")
+      nav << content
+
+      design = nav_tab("Design")
+      design << nav_item("Layouts", "/admin/layouts")
+      design << nav_item("Snippets", "/admin/snippets")
+      nav << design
+
+      # media = nav_tab("Assets")
+      # media << nav_item("All", "/admin/assets/")
+      # media << nav_item("Unattached", "/admin/assets/unattached/")
+
+      settings = nav_tab("Settings")
+      settings << nav_item("Personal", "/admin/preferences/edit")
+      settings << nav_item("Users", "/admin/users")
+      settings << nav_item("Extensions", "/admin/extensions")
+      nav << settings
     end
 
     def load_default_regions
@@ -103,9 +166,8 @@ module Radiant
         page.edit = RegionSet.new do |edit|
             edit.main.concat %w{edit_header edit_form edit_popups}
             edit.form.concat %w{edit_title edit_extended_metadata
-                                  edit_page_parts}
-            edit.form_bottom.concat %w{edit_buttons}
-            edit.parts_bottom.concat %w{edit_layout_and_type edit_timestamp}
+                                  edit_page_parts edit_layout_and_type}
+            edit.form_bottom.concat %w{edit_buttons edit_timestamp}
         end
         page.index = RegionSet.new do |index|
           index.sitemap_head.concat %w{title_column_header status_column_header
@@ -121,14 +183,14 @@ module Radiant
       returning OpenStruct.new do |user|
         user.preferences = RegionSet.new do |preferences|
           preferences.main.concat %w{edit_header edit_form}
-          preferences.form.concat %w{edit_password edit_email}
+          preferences.form.concat %w{edit_name edit_email edit_username edit_password}
           preferences.form_bottom.concat %w{edit_buttons}
         end
         user.edit = RegionSet.new do |edit|
           edit.main.concat %w{edit_header edit_form}
           edit.form.concat %w{edit_name edit_email edit_username edit_password
                               edit_roles edit_notes}
-          edit.form_bottom.concat %w{edit_timestamp edit_buttons}
+          edit.form_bottom.concat %w{edit_buttons edit_timestamp}
         end
         user.index = RegionSet.new do |index|
           index.thead.concat %w{title_header roles_header modify_header}
@@ -143,11 +205,11 @@ module Radiant
       returning OpenStruct.new do |snippet|
         snippet.edit = RegionSet.new do |edit|
           edit.main.concat %w{edit_header edit_form}
-          edit.form.concat %w{edit_title edit_content edit_filter edit_timestamp}
-          edit.form_bottom.concat %w{edit_buttons}
+          edit.form.concat %w{edit_title edit_content edit_filter}
+          edit.form_bottom.concat %w{edit_buttons edit_timestamp}
         end
         snippet.index = RegionSet.new do |index|
-          index.top.concat %w{help_text}
+          index.top.concat %w{}
           index.thead.concat %w{title_header modify_header}
           index.tbody.concat %w{title_cell modify_cell}
           index.bottom.concat %w{new_button}
@@ -160,11 +222,11 @@ module Radiant
       returning OpenStruct.new do |layout|
         layout.edit = RegionSet.new do |edit|
           edit.main.concat %w{edit_header edit_form}
-          edit.form.concat %w{edit_title edit_extended_metadata edit_content edit_timestamp}
-          edit.form_bottom.concat %w{edit_buttons}
+          edit.form.concat %w{edit_title edit_extended_metadata edit_content}
+          edit.form_bottom.concat %w{reference_links edit_buttons edit_timestamp}
         end
         layout.index = RegionSet.new do |index|
-          index.top.concat %w{help_text}
+          index.top.concat %w{}
           index.thead.concat %w{title_header modify_header}
           index.tbody.concat %w{title_cell modify_cell}
           index.bottom.concat %w{new_button}
@@ -172,7 +234,7 @@ module Radiant
         layout.new = layout.edit
       end
     end
-    
+
     def load_default_extension_regions
       returning OpenStruct.new do |extension|
         extension.index = RegionSet.new do |index|

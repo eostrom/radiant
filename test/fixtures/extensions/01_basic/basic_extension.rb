@@ -9,9 +9,8 @@ class BasicExtension < Radiant::Extension
   end
   
   def activate
-    admin.tabs.add "Basic Extension Tab", "/admin/basic"
-  end
-  
-  def deactivate
+    tab 'Content' do
+      add_item("Basic Extension Tab", "/admin/basic", :before => 'Pages')
+    end
   end
 end

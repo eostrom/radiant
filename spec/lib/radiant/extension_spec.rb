@@ -41,6 +41,52 @@ describe Radiant::Extension do
     Radiant::Extension.route_definitions.first.should == my_block
   end
 
+  it "should expose configuration object" do
+    SuperExtension.extension_config do |config|
+      config.should eql(Rails.configuration)
+    end
+  end
+
+  it "should allow the manipulation of tabs" do
+    BasicExtension.admin.nav['Design'].length.should == 2
+    BasicExtension.class_eval {
+      tab 'Design' do
+        add_item "Pages", "/admin/pages"
+      end
+    }
+    BasicExtension.admin.nav['Design'].length.should == 3
+  end
+  
+  it "should allow the addition of tabs" do
+    start_length = BasicExtension.admin.nav.length
+    BasicExtension.class_eval {
+      tab 'Additional'
+    }
+    BasicExtension.admin.nav.length.should == start_length + 1
+  end
+
+  describe ".extension_enabled?" do
+    it "should be false if extension does not exist" do
+      BasicExtension.extension_enabled?(:bogus).should be_false
+    end
+
+    it "should be false if extension is inactive" do
+      OverridingExtension.active = false
+      BasicExtension.extension_enabled?(:overriding).should be_false
+    end
+
+    it "should be false if extension is not migrated" do
+      UpgradingExtension.migrator.new(:up, UpgradingExtension.migrations_path).pending_migrations.should_not be_empty # sanity check
+      BasicExtension.extension_enabled?(:upgrading).should be_false
+    end
+
+    it "should be true if extension is defined and migrated" do
+      ActiveRecord::Migration.suppress_messages do
+        UpgradingExtension.migrator.migrate
+      end
+      BasicExtension.extension_enabled?(:upgrading).should be_true
+    end
+  end
 end
 
 describe Radiant::Extension, "when inactive" do

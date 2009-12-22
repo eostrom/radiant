@@ -1,17 +1,25 @@
 class Admin::PagesController < Admin::ResourceController
   before_filter :initialize_meta_rows_and_buttons, :only => [:new, :edit, :create, :update]
+  before_filter :count_deleted_pages, :only => [:destroy]
+
+  responses do |r|
+    r.plural.js do
+      @level = params[:level].to_i
+      @template_name = 'index'
+      response.headers['Content-Type'] = 'text/html;charset=utf-8'
+      render :action => 'children.html.haml', :layout => false
+    end
+  end
 
   def index
     @homepage = Page.find_by_parent_id(nil)
+    response_for :plural
+  end
+
+  def show
     respond_to do |format|
-      format.html
-      format.js do
-        @level = params[:level].to_i
-        @template_name = 'index'
-        response.headers['Content-Type'] = 'text/html;charset=utf-8'
-        render :action => 'children.html.haml', :layout => false
-      end
-      format.xml { render :xml => models }
+      format.xml { super }
+      format.html { redirect_to edit_admin_page_path(params[:id]) }
     end
   end
 
@@ -32,16 +40,8 @@ class Admin::PagesController < Admin::ResourceController
       end
     end
 
-    def announce_saved(message = nil)
-      flash[:notice] = message || "Your page has been saved below."
-    end
-
-    def announce_pages_removed(count)
-      flash[:notice] = if count > 1
-        "The pages were successfully removed from the site."
-      else
-        "The page was successfully removed from the site."
-      end
+    def count_deleted_pages
+      @count = model.children.count + 1
     end
 
     def initialize_meta_rows_and_buttons

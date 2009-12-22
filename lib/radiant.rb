@@ -4,7 +4,7 @@ unless defined? Radiant::Version
   module Radiant
     module Version
       Major = '0'
-      Minor = '7'
+      Minor = '9'
       Tiny  = '0'
 
       class << self

@@ -49,7 +49,9 @@ module StandardTags
     Renders the total number of children.
   }
   tag 'children:count' do |tag|
-    tag.locals.children.count
+    options = children_find_options(tag)
+    options.delete(:order) # Order is irrelevant
+    tag.locals.children.count(options)
   end
 
   desc %{
@@ -92,8 +94,9 @@ module StandardTags
 
     *Usage:*
     
-    <pre><code><r:children:each [offset="number"] [limit="number"] [by="attribute"] [order="asc|desc"]
-     [status="draft|reviewed|published|hidden|all"]>
+    <pre><code><r:children:each [offset="number"] [limit="number"]
+     [by="published_at|updated_at|created_at|slug|title|keywords|description"]
+     [order="asc|desc"] [status="draft|reviewed|published|hidden|all"]>
      ...
     </r:children:each>
     </code></pre>
@@ -103,9 +106,12 @@ module StandardTags
     result = []
     children = tag.locals.children
     tag.locals.previous_headers = {}
-    children.find(:all, options).each do |item|
+    kids = children.find(:all, options)
+    kids.each_with_index do |item, i|
       tag.locals.child = item
       tag.locals.page = item
+      tag.locals.first_child = i == 0
+      tag.locals.last_child = i == kids.length - 1
       result << tag.expand
     end
     result
@@ -127,7 +133,81 @@ module StandardTags
     tag.locals.page = tag.locals.child
     tag.expand
   end
+  
+  desc %{
+    Renders the tag contents only if the current page is the first child in the context of
+    a children:each tag
+    
+    *Usage:*
+    
+    <pre><code><r:children:each>
+      <r:if_first >
+        ...
+      </r:if_first>
+    </r:children:each>
+    </code></pre>
+    
+  }
+  tag 'children:each:if_first' do |tag|
+    tag.expand if tag.locals.first_child
+  end
 
+  
+  desc %{
+    Renders the tag contents unless the current page is the first child in the context of
+    a children:each tag
+    
+    *Usage:*
+    
+    <pre><code><r:children:each>
+      <r:unless_first >
+        ...
+      </r:unless_first>
+    </r:children:each>
+    </code></pre>
+    
+  }
+  tag 'children:each:unless_first' do |tag|
+    tag.expand unless tag.locals.first_child
+  end
+  
+  desc %{
+    Renders the tag contents only if the current page is the last child in the context of
+    a children:each tag
+    
+    *Usage:*
+    
+    <pre><code><r:children:each>
+      <r:if_last >
+        ...
+      </r:if_last>
+    </r:children:each>
+    </code></pre>
+    
+  }
+  tag 'children:each:if_last' do |tag|
+    tag.expand if tag.locals.last_child
+  end
+
+  
+  desc %{
+    Renders the tag contents unless the current page is the last child in the context of
+    a children:each tag
+    
+    *Usage:*
+    
+    <pre><code><r:children:each>
+      <r:unless_last >
+        ...
+      </r:unless_last>
+    </r:children:each>
+    </code></pre>
+    
+  }
+  tag 'children:each:unless_last' do |tag|
+    tag.expand unless tag.locals.last_child
+  end
+  
   desc %{
     Renders the tag contents only if the contents do not match the previous header. This
     is extremely useful for rendering date headers for a list of child pages.
@@ -270,6 +350,13 @@ module StandardTags
   tag 'content' do |tag|
     page = tag.locals.page
     part_name = tag_part_name(tag)
+    # Prevent simple and deep recursive rendering of the same page part
+    rendered_parts = (tag.locals.rendered_parts ||= Hash.new {|h,k| h[k] = []})
+    if rendered_parts[page.id].include?(part_name)
+      raise TagError.new(%{Recursion error: already rendering the `#{part_name}' part.})
+    else
+      rendered_parts[page.id] << part_name
+    end
     boolean_attr = proc do |attribute_name, default|
       attribute = (tag.attr[attribute_name] || default).to_s
       raise TagError.new(%{`#{attribute_name}' attribute of `content' tag must be set to either "true" or "false"}) unless attribute =~ /true|false/i
@@ -303,15 +390,14 @@ module StandardTags
     <pre><code><r:if_content [part="part_name, other_part"] [inherit="true"] [find="any"]>...</r:if_content></code></pre>
   }
   tag 'if_content' do |tag|
-    page = tag.locals.page
     part_name = tag_part_name(tag)
     parts_arr = part_name.split(',')
     inherit = boolean_attr_or_error(tag, 'inherit', 'false')
     find = attr_or_error(tag, :attribute_name => 'find', :default => 'all', :values => 'any, all')
     expandable = true
     one_found = false
-    part_page = page
     parts_arr.each do |name|
+      part_page = tag.locals.page
       name.strip!
       if inherit
         while (part_page.part(name).nil? and (not part_page.parent.nil?)) do
@@ -339,14 +425,13 @@ module StandardTags
     <pre><code><r:unless_content [part="part_name, other_part"] [inherit="false"] [find="any"]>...</r:unless_content></code></pre>
   }
   tag 'unless_content' do |tag|
-    page = tag.locals.page
     part_name = tag_part_name(tag)
     parts_arr = part_name.split(',')
     inherit = boolean_attr_or_error(tag, 'inherit', false)
     find = attr_or_error(tag, :attribute_name => 'find', :default => 'all', :values => 'any, all')
     expandable, all_found = true, true
-    part_page = page
     parts_arr.each do |name|
+      part_page = tag.locals.page
       name.strip!
       if inherit
         while (part_page.part(name).nil? and (not part_page.parent.nil?)) do
@@ -483,7 +568,7 @@ module StandardTags
     else
       page.published_at || page.created_at
     end
-    adjust_time(date).strftime(format)
+    date.strftime(format)
   end
 
   desc %{
@@ -687,6 +772,10 @@ module StandardTags
        page's URL
     * @selected@ specifies the state of the link when the current page matches
        is a child of the specified url
+    # @if_last@ renders its contents within a @normal@, @here@ or
+      @selected@ tag if the item is the last in the navigation elements
+    # @if_first@ renders its contents within a @normal@, @here@ or
+      @selected@ tag if the item is the first in the navigation elements
 
     The @between@ tag specifies what should be inserted in between each of the links.
 
@@ -711,11 +800,13 @@ module StandardTags
       key = parts.join(':')
       [key.strip, value.strip]
     end
-    pairs.each do |title, url|
+    pairs.each_with_index do |(title, url), i|
       compare_url = remove_trailing_slash(url)
       page_url = remove_trailing_slash(self.url)
       hash[:title] = title
       hash[:url] = url
+      tag.locals.first_child = i == 0
+      tag.locals.last_child = i == pairs.length - 1
       case page_url
       when compare_url
         result << (hash[:here] || hash[:selected] || hash[:normal]).call
@@ -739,6 +830,54 @@ module StandardTags
       hash = tag.locals.navigation
       hash[symbol]
     end
+  end
+
+  desc %{
+    Renders the containing elements if the element is the first
+    in the navigation list
+
+    *Usage:*
+
+    <pre><code><r:normal><r:if_first>...</r:if_first></r:normal></code></pre>
+  }
+  tag 'navigation:if_first' do |tag|
+    tag.expand if tag.locals.first_child
+  end
+
+  desc %{
+    Renders the containing elements unless the element is the first
+    in the navigation list
+
+    *Usage:*
+
+    <pre><code><r:normal><r:unless_first>...</r:unless_first></r:normal></code></pre>
+  }
+  tag 'navigation:unless_first' do |tag|
+    tag.expand unless tag.locals.first_child
+  end
+
+  desc %{
+    Renders the containing elements unless the element is the last
+    in the navigation list
+
+    *Usage:*
+
+    <pre><code><r:normal><r:unless_last>...</r:unless_last></r:normal></code></pre>
+  }
+  tag 'navigation:unless_last' do |tag|
+    tag.expand unless tag.locals.last_child
+  end
+
+  desc %{
+    Renders the containing elements if the element is the last
+    in the navigation list
+
+    *Usage:*
+
+    <pre><code><r:normal><r:if_last>...</r:if_last></r:normal></code></pre>
+  }
+  tag 'navigation:if_last' do |tag|
+    tag.expand if tag.locals.last_child
   end
 
   desc %{
@@ -900,7 +1039,7 @@ module StandardTags
     end
 
     def relative_url_for(url, request)
-      File.join(request.relative_url_root, url)
+      File.join(ActionController::Base.relative_url_root || '', url)
     end
 
     def absolute_path_for(base_path, new_path)
@@ -931,7 +1070,10 @@ module StandardTags
     end
 
     def dev?(request)
-      dev_host = Radiant::Config['dev.host']
-      request && ((dev_host && dev_host == request.host) || request.host =~ /^dev\./)
+      if dev_host = Radiant::Config['dev.host']
+        dev_host == request.host
+      else
+        request.host =~ /^dev\./
+      end
     end
 end

@@ -43,15 +43,28 @@ describe ApplicationHelper do
   it "should create a button for a new model" do
     model = mock_model(Page)
     model.should_receive(:new_record?).and_return(true)
-    helper.should_receive(:submit_tag).with("Create Page", :class => 'button')
+    helper.should_receive(:submit_tag).with("Create Page", :class => 'button', :accesskey=>"S")
     helper.save_model_button(model)
   end
   
   it "should create a button for an existing model" do
     model = mock_model(Page)
     model.should_receive(:new_record?).and_return(false)
-    helper.should_receive(:submit_tag).with("Save Changes", :class => 'button')
+    helper.should_receive(:submit_tag).with("Save Changes", :class => 'button', :accesskey=>"S")
     helper.save_model_button(model)
+  end
+  
+  it "should create a button with custom options" do
+    model = mock_model(Page)
+    model.should_receive(:new_record?).and_return(false)
+    helper.should_receive(:submit_tag).with("Save Changes", :class => 'custom', :accesskey=>"S")
+    helper.save_model_button(model, :class => 'custom')
+  end
+  
+  it "should create a button with a custom label" do
+    model = mock_model(Page)
+    helper.should_receive(:submit_tag).with("Create PAGE", :class => 'button', :accesskey=>"S")
+    helper.save_model_button(model, :label => "Create PAGE")
   end
   
   it "should create a save and continue button" do
@@ -66,26 +79,6 @@ describe ApplicationHelper do
     helper.pluralize(2, "page").should == "pages"
     helper.pluralize(0, "page").should == "pages"
     helper.pluralize(2, "ox", "oxen").should == "oxen"
-  end
-  
-  it "should generate links for the admin navigation" do
-    helper.stub!(:current_user).and_return(users(:admin))
-    helper.links_for_navigation.should =~ Regexp.new("/admin/pages")
-    helper.links_for_navigation.should =~ Regexp.new(helper.separator)
-    helper.links_for_navigation.should =~ Regexp.new("/admin/snippets")
-    helper.links_for_navigation.should =~ Regexp.new("/admin/layouts")
-  end
-  
-  it "should hide admin links that should not be visible to the current user" do
-    helper.stub!(:current_user).and_return(users(:existing))
-    helper.links_for_navigation.should =~ Regexp.new("/admin/pages")
-    helper.links_for_navigation.should =~ Regexp.new(helper.separator)
-    helper.links_for_navigation.should =~ Regexp.new("/admin/snippets")
-    helper.links_for_navigation.should_not =~ Regexp.new("/admin/layouts")
-  end
-  
-  it "should render a separator" do
-    helper.separator.should == %{ <span class="separator"> | </span> }
   end
   
   it "should determine whether a given url matches the current url" do
@@ -116,9 +109,9 @@ describe ApplicationHelper do
     helper.admin?.should be_true
   end
   
-  it "should determine whether the current user is a developer" do
-    helper.should_receive(:current_user).at_least(1).times.and_return(users(:developer))
-    helper.developer?.should be_true
+  it "should determine whether the current user is a designer" do
+    helper.should_receive(:current_user).at_least(1).times.and_return(users(:designer))
+    helper.designer?.should be_true
   end
   
   it "should render a Javascript snippet that focuses a given field" do
@@ -130,11 +123,11 @@ describe ApplicationHelper do
     model.should_receive(:new_record?).and_return(false)
     model.should_receive(:updated_by).and_return(users(:admin))
     model.should_receive(:updated_at).and_return(Time.local(2008, 3, 30, 10, 30))
-    helper.updated_stamp(model).should == %{<p style="clear: left"><small>Last updated by admin at 10:30 <small>AM</small> on March 30, 2008</small></p>}
+    helper.updated_stamp(model).should == %{<p class="updated_line">Last updated by <strong>Admin</strong> at 10:30 am on March 30, 2008</p>}
   end
   
   it "should render a timezone-adjusted timestamp" do
-    helper.timestamp(Time.local(2008, 3, 30, 10, 30)).should == "10:30 <small>AM</small> on March 30, 2008"
+    helper.timestamp(Time.local(2008, 3, 30, 10, 30)).should == "10:30 am on March 30, 2008"
   end
   
   it "should determine whether a meta area item should be visible" do
@@ -148,7 +141,7 @@ describe ApplicationHelper do
   end
   
   it "should render a Javascript snippet to toggle the meta area" do
-    helper.toggle_javascript_for("joe").should == "Element.toggle('joe'); Element.toggle('more-joe'); Element.toggle('less-joe');"
+    helper.toggle_javascript_for("joe").should == "Element.toggle('joe'); Element.toggle('more-joe'); Element.toggle('less-joe'); return false;"
   end
   
   it "should render an image tag with a default file extension" do

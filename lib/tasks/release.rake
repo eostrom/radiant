@@ -10,7 +10,9 @@ PKG_FILE_NAME = "#{PKG_NAME}-#{PKG_VERSION}"
 RUBY_FORGE_PROJECT = PKG_NAME
 RUBY_FORGE_USER = ENV['RUBY_FORGE_USER'] || 'jlong'
 
-RELEASE_NAME  = PKG_VERSION
+RELEASE_NAME  = ENV['RELEASE_NAME'] || PKG_VERSION
+RELEASE_NOTES = ENV['RELEASE_NOTES'] ? " -n #{ENV['RELEASE_NOTES']}" : ''
+RELEASE_CHANGES = ENV['RELEASE_CHANGES'] ? " -a #{ENV['RELEASE_CHANGES']}" : ''
 RUBY_FORGE_GROUPID = '1337'
 RUBY_FORGE_PACKAGEID = '1638'
 
@@ -31,9 +33,8 @@ namespace 'radiant' do
     s.bindir = 'bin'
     s.executables = (Dir['bin/*'] + Dir['scripts/*']).map { |file| File.basename(file) } 
     s.add_dependency 'rake', '>= 0.8.3'
-    s.add_dependency 'rspec', '>= 1.1.11'
-    s.add_dependency 'rspec-rails', '>= 1.1.11'
-    # s.autorequire = 'radiant'
+    s.add_dependency 'rack', '>=1.0.1' # No longer bundled in actionpack
+    s.add_dependency 'RedCloth', '>=4.0.0'
     s.has_rdoc = true
     s.rdoc_options << '--title' << RDOC_TITLE << '--line-numbers' << '--main' << 'README'
     rdoc_excludes = Dir["**"].reject { |f| !File.directory? f }
@@ -57,7 +58,15 @@ namespace 'radiant' do
     files.include 'log/.keep'
     files.exclude /^pkg/
     files.include 'public/.htaccess'
-    files.exclude /^tmp/
+    files.exclude /\btmp\b/
+    files.exclude 'radiant.gemspec'
+    # Read .gitignore from plugins and exclude those files
+    Dir['vendor/plugins/*/.gitignore'].each do |gi|
+      dirname = File.dirname(gi)
+      File.readlines(gi).each do |i|
+        files.exclude "#{dirname}/**/#{i}"
+      end
+    end
     s.files = files.to_a
   end
 
@@ -73,14 +82,16 @@ namespace 'radiant' do
   namespace :gem do
     desc "Uninstall Gem"
     task :uninstall do
-      sh "gem uninstall #{PKG_NAME}" rescue nil
+      sudo = "sudo " unless RUBY_PLATFORM =~ /mswin|mingw/
+      sh "#{sudo}gem uninstall #{PKG_NAME}" rescue nil
     end
 
     desc "Build and install Gem from source"
-    task :install => [:package, :uninstall] do
+    task :install => [:gemspec, :package, :uninstall] do
       chdir("#{RADIANT_ROOT}/pkg") do
         latest = Dir["#{PKG_NAME}-*.gem"].last
-        sh "gem install #{latest}"
+        sudo = "sudo " unless RUBY_PLATFORM =~ /mswin|mingw/
+        sh "#{sudo}gem install #{latest}"
       end
     end
   end
@@ -88,11 +99,23 @@ namespace 'radiant' do
   desc "Publish the release files to RubyForge."
   task :release => [:gem, :package] do
     files = ["gem", "tgz", "zip"].map { |ext| "pkg/#{PKG_FILE_NAME}.#{ext}" }
-
-    system %{rubyforge login --username #{RUBY_FORGE_USER}}
-  
-    files.each do |file|
-      system %{rubyforge add_release #{RUBY_FORGE_GROUPID} #{RUBY_FORGE_PACKAGEID} "#{RELEASE_NAME}" #{file}}
+    release_id = nil
+    system %{rubyforge login}
+    files.each_with_index do |file, idx|
+      if idx == 0
+        cmd = %Q[rubyforge add_release #{RELEASE_NOTES}#{RELEASE_CHANGES} --preformatted #{RUBY_FORGE_GROUPID} #{RUBY_FORGE_PACKAGEID} "#{RELEASE_NAME}" #{file}]
+        puts cmd
+        system cmd
+      else
+        release_id ||= begin
+          puts "rubyforge config #{RUBY_FORGE_PROJECT}"
+          system "rubyforge config #{RUBY_FORGE_PROJECT}"
+          `cat ~/.rubyforge/auto-config.yml | grep "#{RELEASE_NAME}"`.strip.split(/:/).last.strip
+        end
+        cmd = %Q[rubyforge add_file #{RUBY_FORGE_GROUPID} #{RUBY_FORGE_PACKAGEID} #{release_id} #{file}]
+        puts cmd
+        system cmd
+      end
     end
   end
 end
