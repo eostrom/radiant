@@ -5,6 +5,7 @@ class HomePageDataset < Dataset::Base
                         :description => "The homepage", 
                         :keywords => "Home, Page" do
       create_page_part "body", :content => "Hello world!"
+      create_page_part "repeat_body", :content => "<r:content /><r:content />"
       create_page_part "sidebar", :content => "<r:title /> sidebar."
       create_page_part "extended", :content => "Just a test."
       create_page_part "titles", :content => "<r:title /> <r:page:title />"

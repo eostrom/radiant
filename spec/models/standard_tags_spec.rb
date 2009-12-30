@@ -269,6 +269,7 @@ describe "Standard Tags" do
 
     it "should not prevent rendering a part more than once in sequence" do
       page(:home).should render('<r:content /><r:content />').as('Hello world!Hello world!')
+      page(:home).should render('<r:content part="repeat_body" />').as('Hello world!Hello world!')
     end
 
     describe "with inherit attribute" do
